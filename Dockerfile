@@ -9,7 +9,7 @@ RUN composer install \
     --prefer-dist \
     --optimize-autoloader
 
-# ── Stage 2: PHP-FPM Runtime ────────────────────────────────
+# ── Stage 2: PHP-FPM + Nginx Runtime ────────────────────────
 FROM php:8.4-fpm-alpine
 
 RUN apk add --no-cache \
@@ -20,7 +20,10 @@ RUN apk add --no-cache \
     linux-headers \
     autoconf \
     g++ \
-    make
+    make \
+    nginx \
+    supervisor \
+    gettext
 
 RUN docker-php-ext-install \
     pdo_mysql \
@@ -47,5 +50,12 @@ COPY . .
 RUN chown -R www-data:www-data storage bootstrap/cache \
  && chmod -R 775 storage bootstrap/cache
 
-EXPOSE 9000
-CMD ["php-fpm"]
+# Copy configs
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/nginx/default.conf /etc/nginx/nginx-app.conf
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8080
+CMD ["/entrypoint.sh"]
