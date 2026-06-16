@@ -1,0 +1,12 @@
+{
+    "name": "lb-node-server",
+    "version": "1.0.0",
+    "description": "Simulated backend node for load balancer visualizer",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js"
+    },
+    "engines": {
+        "node": ">=18"
+    }
+}
