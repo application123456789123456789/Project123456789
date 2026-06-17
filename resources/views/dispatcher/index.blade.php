@@ -514,12 +514,10 @@
                                     class="sparkline-canvas opacity-70"></canvas>
                         </div>
                         <div class="flex items-center gap-2 ml-auto">
-                            <span class="text-gray-500">Queue</span>
-                            <span class="font-mono text-gray-300" x-text="node.queue_depth"></span>
                             <span class="text-gray-500 ml-2">Err</span>
                             <span class="font-mono"
-                                  :class="node.error_rate > 0.1 ? 'text-danger' : 'text-gray-400'"
-                                  x-text="(node.error_rate * 100).toFixed(1) + '%'"></span>
+                                :class="node.error_count > 10 ? 'text-danger' : 'text-gray-400'"
+                                x-text="node.error_count"></span>
                         </div>
                     </div>
                 </div>
@@ -656,6 +654,7 @@ function dispatcherApp() {
         alerts:        [],
         alertCounter:  0,
         loading:       false,
+        loadingStyle:  'spin',
         burstCount:    20,
         burstProgress: 0,
         lastTarget:    null,
@@ -810,23 +809,26 @@ function dispatcherApp() {
     });
 },
 
-        updateCharts() {
-            if (!this.latencyChart) return;
+       updateCharts() {
+    if (!this.latencyChart || !this.latencyChart.data) return;
 
-            this.nodes.forEach((node, i) => {
-                if (this.latencyChart.data.datasets[i]) {
-                    this.latencyChart.data.datasets[i].data = [...node.latency_history];
-                }
+    try {
+        this.nodes.forEach((node, i) => {
+            const ds = this.latencyChart.data.datasets[i];
+            if (ds) ds.data = [...node.latency_history];
 
-                const spark = this.chartInstances[node.id];
-                if (spark) {
-                    spark.data.datasets[0].data = [...node.latency_history];
-                    spark.update('none');
-                }
-            });
+            const spark = this.chartInstances[node.id];
+            if (spark && spark.data) {
+                spark.data.datasets[0].data = [...node.latency_history];
+                spark.update('none');
+            }
+        });
 
-            this.latencyChart.update('none');
-        },
+        this.latencyChart.update('none');
+    } catch (e) {
+        // Chart was mid-destroy — skip this update cycle
+    }
+},
 
         // ── Polling (live metrics refresh) ─────────────────────────────────
         startPolling() {

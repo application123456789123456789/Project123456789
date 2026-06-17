@@ -70,34 +70,25 @@ const server = http.createServer((req, res) => {
     if (req.method === "POST" && req.url === "/dispatch") {
         activeConnections++;
         totalRequests++;
-
-        // Latency varies around the current wave value
         const latency = Math.max(2, latencyBase + (Math.random() * 10 - 5));
+
+        const isError = Math.random() < 0.04;
+        if (isError) errors++;
+
+        res.writeHead(isError ? 500 : 200, {
+            "Content-Type": "application/json",
+        });
+        res.end(
+            JSON.stringify({
+                node: NODE_ID,
+                status: isError ? "error" : "dispatched",
+                latency_ms: parseFloat(latency.toFixed(1)),
+            }),
+        );
 
         setTimeout(() => {
             activeConnections = Math.max(0, activeConnections - 1);
-
-            if (Math.random() < 0.04) {
-                // 4% error rate
-                errors++;
-                res.writeHead(500);
-                res.end(
-                    JSON.stringify({
-                        node: NODE_ID,
-                        error: "simulated failure",
-                    }),
-                );
-            } else {
-                res.writeHead(200, { "Content-Type": "application/json" });
-                res.end(
-                    JSON.stringify({
-                        node: NODE_ID,
-                        status: "dispatched",
-                        latency_ms: parseFloat(latency.toFixed(1)),
-                    }),
-                );
-            }
-        }, latency);
+        }, latency * 3);
         return;
     }
 
