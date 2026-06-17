@@ -140,10 +140,10 @@ class DispatcherService
         $offsets = json_decode(Redis::get(self::KEY_SERVED_OFFSET) ?? '{}', true);
 
         // Fire all 5 requests simultaneously
-        $promises = [];
+        
         $pool = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($registry) {
             foreach ($registry as $id => $meta) {
-                $promises[] = $pool->as($id)->timeout(2)->get($meta['url'] . '/stats');
+                $pool->as($id)->timeout(2)->get($meta['url'] . '/stats');
             }
         });
 
