@@ -39,7 +39,7 @@ class DispatcherService
     private const KEY_CH_RING      = 'lb:ch_ring';
     private const KEY_DISPATCH_LOG = 'lb:dispatch_log';
     private const KEY_IDLE_QUEUE   = 'lb:idle_queue';
-
+    private const KEY_SERVED_OFFSET = 'lb:served_offset';
     // ── Thresholds ───────────────────────────────────────────────────────────
     private const CPU_ISOLATION_THRESHOLD  = 90;
     private const CONN_ISOLATION_THRESHOLD = 150;
@@ -136,6 +136,9 @@ class DispatcherService
         $registry  = $this->nodeRegistry();
         $persisted = $this->getPersistedState();
 
+        // Load the offsets from Redis (defaults to empty array if none exist)
+        $offsets = json_decode(Redis::get(self::KEY_SERVED_OFFSET) ?? '{}', true);
+
         // Fire all 5 requests simultaneously
         $promises = [];
         $pool = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($registry) {
@@ -151,12 +154,17 @@ class DispatcherService
                 if ($response->successful()) {
                     $stats = $response->json() ?? [];
 
+                    // Apply offset to zero-out the UI counters mathematically
+                    $rawTotal = $this->safeInt($stats['total_requests'] ?? null, 0);
+                    $offset   = $offsets[$id] ?? 0;
+
                     $nodes[$id] = array_merge($meta, [
                         'active_connections' => $this->safeInt($stats['active_connections'] ?? null, 0),
                         'cpu_pct'            => $this->safeFloat($stats['cpu_usage'] ?? null, 0),
                         'latency_ms'         => $this->safeFloat($stats['latency_ms'] ?? null, 0),
                         'memory_pct'         => $this->safeFloat($stats['memory_pct'] ?? null, 0),
-                        'total_served'       => $this->safeInt($stats['total_requests'] ?? null, 0),
+                        'raw_total_served'   => $rawTotal, // Track raw for next reset
+                        'total_served'       => max(0, $rawTotal - $offset), // Starts at 0!
                         'error_count'        => $this->safeInt($stats['error_count'] ?? null, 0),
                         'success_rate'       => $this->safeFloat($stats['success_rate'] ?? null, 1.0),
                         'offline'            => !($stats['online'] ?? true),
@@ -184,10 +192,6 @@ class DispatcherService
         return array_values($nodes);
     }
 
-    /**
-     * Returns a safe "offline" node object when the HTTP call fails.
-     * All numeric fields default to 0 — never null, never NaN.
-     */
     private function offlineNode(array $meta, array $persisted): array
     {
         return array_merge($meta, [
@@ -195,6 +199,7 @@ class DispatcherService
             'cpu_pct'            => 0,
             'latency_ms'         => 0,
             'memory_pct'         => 0,
+            'raw_total_served'   => $this->safeInt($persisted['raw_total_served'] ?? null, 0),
             'total_served'       => $this->safeInt($persisted['total_served'] ?? null, 0),
             'error_count'        => $this->safeInt($persisted['error_count'] ?? null, 0),
             'success_rate'       => 0,
@@ -255,7 +260,7 @@ class DispatcherService
         Redis::del(self::KEY_CH_RING);
         Redis::del(self::KEY_DISPATCH_LOG);
         Redis::del(self::KEY_IDLE_QUEUE);
-
+        Redis::del(self::KEY_SERVED_OFFSET);
         // Also reset each real node via /chaos/reset
         foreach ($this->nodeRegistry() as $meta) {
             try {
@@ -264,6 +269,14 @@ class DispatcherService
             }
         }
 
+        $nodes = $this->getNodes();
+        $offsets = [];
+        foreach ($nodes as $node) {
+            $offsets[$node['id']] = $node['raw_total_served'] ?? 0;
+        }
+        Redis::set(self::KEY_SERVED_OFFSET, json_encode($offsets));
+
+        // Re-fetch one final time to apply the newly saved offsets
         return $this->getNodes();
     }
 
