@@ -101,7 +101,7 @@
      TOP NAV BAR
      ═══════════════════════════════════════════════════════════════════════ --}}
 <header class="bg-surface border-b border-border sticky top-0 z-50">
-    <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div class="max-w-screen-2xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-3">
             {{-- Animated cluster icon --}}
             <div class="relative w-8 h-8">
@@ -125,7 +125,8 @@
                 <div class="w-2 h-2 rounded-full bg-healthy animate-pulse"></div>
                 <span class="text-xs text-gray-400 font-mono" x-text="clock">00:00:00</span>
             </div>
-            <div class="text-xs text-gray-500">
+            <div class="hidden sm:block text-xs text-gray-500">
+
                 Total dispatched: <span class="text-glow font-mono font-semibold" x-text="totalDispatched">0</span>
             </div>
             <button @click="resetCluster()"
@@ -165,12 +166,12 @@
 {{-- ═══════════════════════════════════════════════════════════════════════
      MAIN LAYOUT: Left controls | Center cluster | Right log
      ═══════════════════════════════════════════════════════════════════════ --}}
-<div class="max-w-screen-2xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
+<div class="max-w-screen-2xl mx-auto px-4 py-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
 
     {{-- ─────────────────────────────────────────────────────────────────
          LEFT PANEL: Strategy selector + controls
          ───────────────────────────────────────────────────────────────── --}}
-    <div class="col-span-3 space-y-4">
+        <div class="col-span-1 lg:col-span-3 space-y-4">
 
         {{-- Strategy Selector --}}
         <div class="bg-surface border border-border rounded-xl p-4">
@@ -309,7 +310,7 @@
     {{-- ─────────────────────────────────────────────────────────────────
          CENTER PANEL: Node cluster visualizer
          ───────────────────────────────────────────────────────────────── --}}
-    <div class="col-span-6 space-y-4">
+    <div class="col-span-1 lg:col-span-6 space-y-4">
 
         {{-- Dispatcher flow diagram (animated on dispatch) --}}
         <div class="bg-surface border border-border rounded-xl p-4">
@@ -386,7 +387,7 @@
         </div>
 
         {{-- ── NODE CARDS GRID ─────────────────────────────────────────── --}}
-        <div class="grid grid-cols-1 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-4">
             <template x-for="node in nodes" :key="node.id">
                 <div class="bg-surface border rounded-xl p-4 transition-all duration-500 relative overflow-hidden"
                      :class="{
@@ -529,7 +530,8 @@
     {{-- ─────────────────────────────────────────────────────────────────
          RIGHT PANEL: Dispatch log + latency chart
          ───────────────────────────────────────────────────────────────── --}}
-    <div class="col-span-3 space-y-4">
+    <div class="col-span-1 lg:col-span-3 space-y-4">
+
 
         {{-- Latency comparison chart --}}
         <div class="bg-surface border border-border rounded-xl p-4">
@@ -544,7 +546,8 @@
             <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">
                 Active Connections
             </h3>
-            <div class="space-y-2">
+            <div class="space-y-2 max-h-48 overflow-y-auto lg:max-h-none">
+
                 <template x-for="node in nodes" :key="node.id + '_bar'">
                     <div class="space-y-1" x-show="!node.offline">
                         <div class="flex justify-between text-xs">
@@ -578,7 +581,7 @@
                     ✕ Clear
                 </button>
             </div>
-            <div class="log-scroll overflow-y-auto max-h-72 space-y-1" id="logContainer">
+            <div class="log-scroll overflow-y-auto max-h-48 md:max-h-72 space-y-1" id="logContainer">
                 <template x-for="(entry, i) in log.slice(0, 50)" :key="i">
                     <div class="flex items-start gap-2 text-xs py-1 border-b border-border/50 animate-slide-in"
                          :class="entry.event ? 'bg-danger/10 rounded px-1' : ''">

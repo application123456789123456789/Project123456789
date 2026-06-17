@@ -24,7 +24,11 @@ use Illuminate\Support\Facades\Redis;
  *   lb:smooth_state   → smooth RR current weights
  *   lb:ch_ring        → consistent hash ring
  *   lb:dispatch_log   → last 200 dispatch events
- *   lb:connections    → per-node active connection counters (hash)
+ *
+ * NOTE: active_connections is read directly from each Node.js server's
+ * live /stats response — it is the real, authoritative in-flight request
+ * count tracked by server.js itself. We do NOT fake or decay it in Redis;
+ * that approach caused the counter to drift and never reflect reality.
  */
 class DispatcherService
 {
@@ -35,7 +39,6 @@ class DispatcherService
     private const KEY_CH_RING      = 'lb:ch_ring';
     private const KEY_DISPATCH_LOG = 'lb:dispatch_log';
     private const KEY_IDLE_QUEUE   = 'lb:idle_queue';
-    private const KEY_CONNECTIONS  = 'lb:connections';
 
     // ── Thresholds ───────────────────────────────────────────────────────────
     private const CPU_ISOLATION_THRESHOLD  = 90;
@@ -44,7 +47,7 @@ class DispatcherService
 
     /**
      * Node registry — maps node ID to its real HTTP URL (from env vars).
-     * Laravel reads these from docker-compose environment block.
+     * Laravel reads these from docker-compose / Railway environment block.
      */
     private function nodeRegistry(): array
     {
@@ -93,12 +96,37 @@ class DispatcherService
     }
 
     // ────────────────────────────────────────────────────────────────────────
+    // SAFE NUMERIC CASTING — prevents NaN/null from ever reaching the frontend
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Safely cast any value (null, string, bool, missing key) to an int.
+     * Anything non-numeric collapses to the given default instead of NaN.
+     */
+    private function safeInt(mixed $value, int $default = 0): int
+    {
+        if ($value === null) return $default;
+        if (is_numeric($value)) return (int) $value;
+        return $default;
+    }
+
+    /**
+     * Safely cast any value to a float, same NaN-proofing as safeInt().
+     */
+    private function safeFloat(mixed $value, float $default = 0.0): float
+    {
+        if ($value === null) return $default;
+        if (is_numeric($value)) return (float) $value;
+        return $default;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
     // REAL NODE POLLING — fetches live stats from each Node.js server
     // ────────────────────────────────────────────────────────────────────────
 
     /**
-     * Poll all Node.js servers concurrently and merge their live stats
-     * with our routing metadata (weight, color, region, isolated flag).
+     * Poll all Node.js servers and merge their live stats with our routing
+     * metadata (weight, color, region, isolated flag).
      *
      * Uses Laravel HTTP client with a short timeout so one slow node
      * doesn't block the whole dashboard refresh.
@@ -117,25 +145,23 @@ class DispatcherService
                 $response = Http::timeout(2)->get($meta['url'] . '/stats');
 
                 if ($response->successful()) {
-                    $stats = $response->json();
-
-                    // Read our Redis-tracked connection count for this node.
-                    // Falls back to whatever the Node.js server reports if Redis has nothing.
-                    $redisConns = (int) Redis::hGet(self::KEY_CONNECTIONS, $id);
+                    $stats = $response->json() ?? [];
 
                     $nodes[$id] = array_merge($meta, [
-                        'active_connections' => max(0, $redisConns ?: ($stats['active_connections'] ?? 0)),
-                        'cpu_pct'            => $stats['cpu_usage']      ?? 0,
-                        'latency_ms'         => $stats['latency_ms']     ?? 0,
-                        'memory_pct'         => $stats['memory_pct']     ?? 0,
-                        'total_served'       => $stats['total_requests'] ?? 0,
-                        'error_count'        => $stats['error_count']    ?? 0,
-                        'success_rate'       => $stats['success_rate']   ?? 1.0,
-                        'offline'            => !($stats['online']       ?? true),
-                        'isolated'           => $persisted[$id]['isolated']   ?? false,
-                        'queue_depth'        => $persisted[$id]['queue_depth'] ?? 0,
-                        'latency_history'    => $persisted[$id]['latency_history']
-                            ?? array_fill(0, 20, $stats['latency_ms'] ?? 20),
+                        // Trust the live server value directly — it's the
+                        // real in-flight connection count, not a simulated one.
+                        'active_connections' => $this->safeInt($stats['active_connections'] ?? null, 0),
+                        'cpu_pct'             => $this->safeFloat($stats['cpu_usage'] ?? null, 0),
+                        'latency_ms'          => $this->safeFloat($stats['latency_ms'] ?? null, 0),
+                        'memory_pct'          => $this->safeFloat($stats['memory_pct'] ?? null, 0),
+                        'total_served'        => $this->safeInt($stats['total_requests'] ?? null, 0),
+                        'error_count'         => $this->safeInt($stats['error_count'] ?? null, 0),
+                        'success_rate'        => $this->safeFloat($stats['success_rate'] ?? null, 1.0),
+                        'offline'             => !($stats['online'] ?? true),
+                        'isolated'            => $persisted[$id]['isolated']   ?? false,
+                        'queue_depth'         => $persisted[$id]['queue_depth'] ?? 0,
+                        'latency_history'     => $persisted[$id]['latency_history']
+                            ?? array_fill(0, 20, $this->safeFloat($stats['latency_ms'] ?? null, 20)),
                     ]);
 
                     // Append to latency sliding window
@@ -143,12 +169,6 @@ class DispatcherService
                     $history[] = $nodes[$id]['latency_ms'];
                     if (count($history) > 20) array_shift($history);
                     $nodes[$id]['latency_history'] = $history;
-
-                    // Decay the Redis connection counter by 1 each poll so
-                    // the UI shows a natural drain rather than snapping to 0.
-                    if ($redisConns > 0) {
-                        Redis::hIncrBy(self::KEY_CONNECTIONS, $id, -1);
-                    }
                 } else {
                     // Node responded with error status — treat as degraded
                     $nodes[$id] = $this->offlineNode($meta, $persisted[$id] ?? []);
@@ -170,6 +190,7 @@ class DispatcherService
 
     /**
      * Returns a safe "offline" node object when the HTTP call fails.
+     * All numeric fields default to 0 — never null, never NaN.
      */
     private function offlineNode(array $meta, array $persisted): array
     {
@@ -178,8 +199,8 @@ class DispatcherService
             'cpu_pct'            => 0,
             'latency_ms'         => 0,
             'memory_pct'         => 0,
-            'total_served'       => $persisted['total_served'] ?? 0,
-            'error_count'        => 0,
+            'total_served'       => $this->safeInt($persisted['total_served'] ?? null, 0),
+            'error_count'        => $this->safeInt($persisted['error_count'] ?? null, 0),
             'success_rate'       => 0,
             'offline'            => true,
             'isolated'           => false,
@@ -238,7 +259,6 @@ class DispatcherService
         Redis::del(self::KEY_CH_RING);
         Redis::del(self::KEY_DISPATCH_LOG);
         Redis::del(self::KEY_IDLE_QUEUE);
-        Redis::del(self::KEY_CONNECTIONS);  // ← reset all connection counters
 
         // Also reset each real node via /chaos/reset
         foreach ($this->nodeRegistry() as $meta) {
@@ -281,19 +301,13 @@ class DispatcherService
             default                      => $this->routeLeastConnections(array_values($healthy)),
         };
 
-        // ① Increment BEFORE dispatch — marks the request as in-flight in Redis.
-        //    dispatchToNode() does NOT touch the counter at all.
-        Redis::hIncrBy(self::KEY_CONNECTIONS, $targetId, 1);
-
         $target   = $this->findNode($nodes, $targetId);
         $logEntry = $this->dispatchToNode($target, $strategy, $payload);
 
-        // ② Do NOT decrement here — let getNodes()'s decay logic drain it
-        //    naturally on each poll so the UI has time to display the value.
-        //    During a burst of N requests the counter accumulates correctly
-        //    and then counts back down as polls fire between requests.
-
-        // ③ Re-fetch so the response includes the incremented counter.
+        // Re-fetch nodes immediately AFTER the dispatch HTTP call completes.
+        // Since server.js tracks active_connections itself (incrementing on
+        // request start, decrementing on completion), this re-fetch reflects
+        // the REAL current state of that node — no Redis simulation needed.
         $nodes = $this->getNodes();
 
         return [
@@ -305,7 +319,6 @@ class DispatcherService
 
     /**
      * Actually send the payload to the chosen Node.js server.
-     * NOTE: This method must NOT touch lb:connections — dispatch() owns that.
      */
     private function dispatchToNode(?array $target, string $strategy, array $payload): array
     {
@@ -316,14 +329,14 @@ class DispatcherService
         $registry = $this->nodeRegistry();
         $url      = $registry[$target['id']]['url'] ?? null;
 
-        $latency = $target['latency_ms'] ?? 0;
+        $latency = $this->safeFloat($target['latency_ms'] ?? null, 0);
 
         if ($url) {
             try {
                 $res = Http::timeout(5)->post($url . '/dispatch', $payload);
                 if ($res->successful()) {
-                    $data    = $res->json();
-                    $latency = $data['latency_ms'] ?? $latency;
+                    $data    = $res->json() ?? [];
+                    $latency = $this->safeFloat($data['latency_ms'] ?? null, $latency);
                 }
             } catch (\Exception $e) {
                 // Node went down mid-dispatch — log it but don't rethrow
@@ -336,14 +349,12 @@ class DispatcherService
             'target'      => $target['id'],
             'target_name' => $target['name'],
             'latency'     => round($latency, 1),
-            'cpu'         => $target['cpu_pct'],
+            'cpu'         => $this->safeFloat($target['cpu_pct'] ?? null, 0),
             'payload'     => $payload['type'] ?? 'request',
         ];
 
         Redis::lPush(self::KEY_DISPATCH_LOG, json_encode($entry));
         Redis::lTrim(self::KEY_DISPATCH_LOG, 0, 199);
-
-        // ← NO hIncrBy here. dispatch() handles the counter exclusively.
 
         return $entry;
     }
