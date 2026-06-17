@@ -62,7 +62,7 @@ class SimulationController extends Controller
     {
         $request->validate([
             'strategy' => 'required|string',
-            'count'    => 'nullable|integer|min:1|max:100',
+            'count'    => 'nullable|integer|min:1|max:1000',
         ]);
 
         $result = $this->dispatcher->simulateBurst(

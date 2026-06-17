@@ -216,9 +216,10 @@
 
             {{-- Burst simulation --}}
             <div class="flex gap-2">
-                <input type="number" x-model="burstCount" min="1" max="100" value="20"
-                       class="w-16 bg-panel border border-border rounded-lg px-2 py-2 text-sm text-center text-white
-                              focus:outline-none focus:border-accent"/>
+                <input type="number" x-model="burstCount" min="1" max="1000" value="20"
+       @input="burstCount = Math.min(1000, Math.max(1, parseInt(burstCount) || 1))"
+       class="w-16 bg-panel border border-border rounded-lg px-2 py-2 text-sm text-center text-white
+              focus:outline-none focus:border-accent"/>
                 <button @click="burstDispatch()"
                         :disabled="loading"
                         class="flex-1 flex items-center justify-center gap-2 px-4 py-2
@@ -821,7 +822,9 @@ function dispatcherApp() {
 
         // ── Single dispatch ─────────────────────────────────────────────────
         async singleDispatch() {
+            if (this.loading) return;          // hard guard, not just UI disabled
             this.loading = true;
+
             try {
                 const res  = await this.post('/dispatcher/dispatch', {
                     strategy: this.strategy,
@@ -840,6 +843,17 @@ function dispatcherApp() {
 
         // ── Burst dispatch ──────────────────────────────────────────────────
         async burstDispatch() {
+            if (this.loading) return;          // hard guard
+            const count = parseInt(this.burstCount);
+            if (!count || count < 1) {
+                this.pushAlert('warn', 'Enter a valid burst count.');
+                return;
+            }
+            if (count > 1000) {
+        this.pushAlert('warn', 'Burst count capped at 1000 per request.');
+        this.burstCount = 1000;
+        return;
+    }
             this.loading = true;
             this.burstProgress = 0;
 
