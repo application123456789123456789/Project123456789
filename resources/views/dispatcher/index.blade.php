@@ -531,14 +531,6 @@
     <div class="col-span-1 lg:col-span-3 space-y-4">
 
 
-        {{-- Latency comparison chart --}}
-        <div class="bg-surface border border-border rounded-xl p-4">
-            <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">
-                Live Latency — All Nodes (ms)
-            </h3>
-            <canvas id="latencyChart" height="120"></canvas>
-        </div>
-
         {{-- Connections bar chart --}}
         <div class="bg-surface border border-border rounded-xl p-4">
             <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">
@@ -663,7 +655,6 @@ function dispatcherApp() {
         clock:         '--:--:--',
         pollInterval:  null,
         chartInstances: {},   // { nodeId: Chart } for sparklines
-        latencyChart:  null,
 
         // ── Strategy metadata ───────────────────────────────────────────────
         strategies: {!! json_encode($strategies) !!},
@@ -729,41 +720,6 @@ function dispatcherApp() {
         initCharts() {
     this.$nextTick(() => {
         setTimeout(() => {
-            // ── Latency chart ──────────────────────────────────────────
-            const oldCtx = document.getElementById('latencyChart');
-            if (!oldCtx) return;
-
-            // Replace the canvas node entirely — kills any stale Chart.js ref
-            const newCanvas = document.createElement('canvas');
-            newCanvas.id = 'latencyChart';
-            newCanvas.height = 120;
-            oldCtx.replaceWith(newCanvas);
-
-            this.latencyChart = new Chart(newCanvas, {
-                type: 'line',
-                data: {
-                    labels: Array(20).fill(''),
-                    datasets: this.nodes.map((node, i) => ({
-                        label:           node.name,
-                        data:            [...node.latency_history],
-                        borderColor:     ['#3fb950','#58a6ff','#e05c2e','#d29922','#c084fc'][i % 5],
-                        backgroundColor: 'transparent',
-                        borderWidth:     1.5,
-                        pointRadius:     0,
-                        tension:         0.4,
-                    }))
-                },
-                options: {
-                    responsive:  true,
-                    animation:   false,
-                    plugins: { legend: { labels: { color: '#6e7681', font: { size: 10 } } } },
-                    scales: {
-                        x: { display: false },
-                        y: { grid: { color: '#21262d' }, ticks: { color: '#6e7681', font: { size: 10 } }, min: 0 }
-                    }
-                }
-            });
-
             // ── Sparklines ─────────────────────────────────────────────
             this.nodes.forEach((node, i) => {
                 const oldSpark = document.getElementById('spark_' + node.id);
@@ -810,21 +766,15 @@ function dispatcherApp() {
 },
 
        updateCharts() {
-    if (!this.latencyChart || !this.latencyChart.data) return;
 
     try {
         this.nodes.forEach((node, i) => {
-            const ds = this.latencyChart.data.datasets[i];
-            if (ds) ds.data = [...node.latency_history];
-
             const spark = this.chartInstances[node.id];
             if (spark && spark.data) {
                 spark.data.datasets[0].data = [...node.latency_history];
                 spark.update('none');
             }
         });
-
-        this.latencyChart.update('none');
     } catch (e) {
         // Chart was mid-destroy — skip this update cycle
     }
@@ -958,11 +908,6 @@ function dispatcherApp() {
     const res  = await this.post('/dispatcher/reset', {});
     const data = await res.json();
     if (data.ok) {
-        // 1. Destroy ALL chart instances before touching state
-        if (this.latencyChart) {
-            this.latencyChart.destroy();
-            this.latencyChart = null;
-        }
         Object.values(this.chartInstances).forEach(chart => chart.destroy());
         this.chartInstances = {};
 
