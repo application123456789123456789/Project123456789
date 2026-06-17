@@ -939,16 +939,28 @@ function dispatcherApp() {
         },
 
         async resetCluster() {
-            const res  = await this.post('/dispatcher/reset', {});
-            const data = await res.json();
-            if (data.ok) {
-                this.updateState(data.nodes, []);
-                this.log = [];
-                this.alerts = [];
-                this.chartInstances = {};
-                this.$nextTick(() => this.initCharts());
-            }
-        },
+    const res  = await this.post('/dispatcher/reset', {});
+    const data = await res.json();
+    if (data.ok) {
+        // 1. Destroy ALL chart instances before touching state
+        if (this.latencyChart) {
+            this.latencyChart.destroy();
+            this.latencyChart = null;
+        }
+        Object.values(this.chartInstances).forEach(chart => chart.destroy());
+        this.chartInstances = {};
+
+        // 2. Now update state
+        this.updateState(data.nodes, []);
+        this.log = [];
+        this.alerts = [];
+
+        // 3. Wait for Alpine to re-render DOM, then re-init
+        this.$nextTick(() => {
+            setTimeout(() => this.initCharts(), 50);
+        });
+    }
+},
         async clearLog() {
             await this.post('/dispatcher/log/clear', {});
             this.log = [];
