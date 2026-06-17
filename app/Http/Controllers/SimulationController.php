@@ -21,7 +21,7 @@ class SimulationController extends Controller
     // ── Initial page render ──────────────────────────────────────────────────
     public function index(): \Illuminate\View\View
     {
-        $nodes = $this->dispatcher->getNodes();
+        $nodes = $this->dispatcher->initializeNodes();
         return view('dispatcher.index', [
             'nodes'      => $nodes,
             'strategies' => $this->strategyList(),
