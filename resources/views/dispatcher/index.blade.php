@@ -516,8 +516,8 @@
                         <div class="flex items-center gap-2 ml-auto">
                             <span class="text-gray-500 ml-2">Err</span>
                             <span class="font-mono"
-                                :class="node.error_count > 10 ? 'text-danger' : 'text-gray-400'"
-                                x-text="node.error_count"></span>
+      :class="node.error_count > 0 ? 'text-danger' : 'text-gray-400'"
+      x-text="node.error_count"></span>
                         </div>
                     </div>
                 </div>

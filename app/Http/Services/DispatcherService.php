@@ -133,56 +133,52 @@ class DispatcherService
      */
     public function getNodes(): array
     {
-        $registry = $this->nodeRegistry();
-        $nodes    = [];
-
-        // Load persisted routing state (isolated flags, total_served, etc.)
+        $registry  = $this->nodeRegistry();
         $persisted = $this->getPersistedState();
 
-        foreach ($registry as $id => $meta) {
-            try {
-                // GET /stats from the real Node.js process
-                $response = Http::timeout(2)->get($meta['url'] . '/stats');
+        // Fire all 5 requests simultaneously
+        $promises = [];
+        $pool = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($registry) {
+            foreach ($registry as $id => $meta) {
+                $promises[] = $pool->as($id)->timeout(2)->get($meta['url'] . '/stats');
+            }
+        });
 
+        $nodes = [];
+        foreach ($registry as $id => $meta) {
+            $response = $pool[$id];
+            try {
                 if ($response->successful()) {
                     $stats = $response->json() ?? [];
 
                     $nodes[$id] = array_merge($meta, [
-                        // Trust the live server value directly — it's the
-                        // real in-flight connection count, not a simulated one.
                         'active_connections' => $this->safeInt($stats['active_connections'] ?? null, 0),
-                        'cpu_pct'             => $this->safeFloat($stats['cpu_usage'] ?? null, 0),
-                        'latency_ms'          => $this->safeFloat($stats['latency_ms'] ?? null, 0),
-                        'memory_pct'          => $this->safeFloat($stats['memory_pct'] ?? null, 0),
-                        'total_served'        => $this->safeInt($stats['total_requests'] ?? null, 0),
-                        'error_count'         => $this->safeInt($stats['error_count'] ?? null, 0),
-                        'success_rate'        => $this->safeFloat($stats['success_rate'] ?? null, 1.0),
-                        'offline'             => !($stats['online'] ?? true),
-                        'isolated'            => $persisted[$id]['isolated']   ?? false,
-                        'queue_depth'         => $persisted[$id]['queue_depth'] ?? 0,
-                        'latency_history'     => $persisted[$id]['latency_history']
+                        'cpu_pct'            => $this->safeFloat($stats['cpu_usage'] ?? null, 0),
+                        'latency_ms'         => $this->safeFloat($stats['latency_ms'] ?? null, 0),
+                        'memory_pct'         => $this->safeFloat($stats['memory_pct'] ?? null, 0),
+                        'total_served'       => $this->safeInt($stats['total_requests'] ?? null, 0),
+                        'error_count'        => $this->safeInt($stats['error_count'] ?? null, 0),
+                        'success_rate'       => $this->safeFloat($stats['success_rate'] ?? null, 1.0),
+                        'offline'            => !($stats['online'] ?? true),
+                        'isolated'           => $persisted[$id]['isolated']    ?? false,
+                        'queue_depth'        => $this->safeInt($stats['queue_depth'] ?? null, 0),
+                        'latency_history'    => $persisted[$id]['latency_history']
                             ?? array_fill(0, 20, $this->safeFloat($stats['latency_ms'] ?? null, 20)),
                     ]);
 
-                    // Append to latency sliding window
                     $history   = $nodes[$id]['latency_history'];
                     $history[] = $nodes[$id]['latency_ms'];
                     if (count($history) > 20) array_shift($history);
                     $nodes[$id]['latency_history'] = $history;
                 } else {
-                    // Node responded with error status — treat as degraded
                     $nodes[$id] = $this->offlineNode($meta, $persisted[$id] ?? []);
                 }
-            } catch (\Exception $e) {
-                // Node unreachable — mark offline
+            } catch (\Exception) {
                 $nodes[$id] = $this->offlineNode($meta, $persisted[$id] ?? []);
             }
         }
 
-        // Check isolation thresholds on fresh data
         $nodes = $this->checkAndIsolateOverloadedNodes($nodes);
-
-        // Persist routing state back to Redis
         $this->persistState($nodes);
 
         return array_values($nodes);

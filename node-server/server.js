@@ -67,30 +67,32 @@ const server = http.createServer((req, res) => {
     }
 
     // ── POST /dispatch ───────────────────────────────────────────────────────
-    if (req.method === "POST" && req.url === "/dispatch") {
-        activeConnections++;
-        totalRequests++;
-        const latency = Math.max(2, latencyBase + (Math.random() * 10 - 5));
+   if (req.method === "POST" && req.url === "/dispatch") {
+       activeConnections++;
+       totalRequests++;
 
-        const isError = Math.random() < 0.04;
-        if (isError) errors++;
+       const latency = Math.max(2, latencyBase + (Math.random() * 10 - 5));
+       const isError = Math.random() < 0.04;
+       if (isError) errors++;
 
-        res.writeHead(isError ? 500 : 200, {
-            "Content-Type": "application/json",
-        });
-        res.end(
-            JSON.stringify({
-                node: NODE_ID,
-                status: isError ? "error" : "dispatched",
-                latency_ms: parseFloat(latency.toFixed(1)),
-            }),
-        );
+       res.writeHead(isError ? 500 : 200, {
+           "Content-Type": "application/json",
+       });
+       res.end(
+           JSON.stringify({
+               node: NODE_ID,
+               status: isError ? "error" : "dispatched",
+               latency_ms: parseFloat(latency.toFixed(1)),
+           }),
+       );
 
-        setTimeout(() => {
-            activeConnections = Math.max(0, activeConnections - 1);
-        }, latency * 3);
-        return;
-    }
+       // Hold for 3-8 seconds so the 2s poll actually catches it
+       const holdMs = 3000 + Math.random() * 5000;
+       setTimeout(() => {
+           activeConnections = Math.max(0, activeConnections - 1);
+       }, holdMs);
+       return;
+   }
 
     // ── GET /stats ───────────────────────────────────────────────────────────
     if (req.method === "GET" && req.url === "/stats") {
