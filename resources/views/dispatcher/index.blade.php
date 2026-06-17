@@ -508,13 +508,16 @@
                             <span class="font-mono"
                                   :class="node.latency_ms > 45 ? 'text-danger' : node.latency_ms > 25 ? 'text-warn' : 'text-glow'"
                                   x-text="node.latency_ms.toFixed(1) + ' ms'"></span>
+                            {{-- Mini sparkline --}}
+                            <canvas :id="'spark_' + node.id"
+                                    width="60" height="20"
+                                    class="sparkline-canvas opacity-70"></canvas>
                         </div>
                         <div class="flex items-center gap-2 ml-auto">
                             <span class="text-gray-500 ml-2">Err</span>
                             <span class="font-mono"
-                                    :class="node.error_count > 0 ? 'text-danger' : 'text-gray-400'"
-                                    x-text="node.error_count">
-                            </span>
+      :class="node.error_count > 0 ? 'text-danger' : 'text-gray-400'"
+      x-text="node.error_count"></span>
                         </div>
                     </div>
                 </div>
@@ -527,6 +530,14 @@
          ───────────────────────────────────────────────────────────────── --}}
     <div class="col-span-1 lg:col-span-3 space-y-4">
 
+
+        {{-- Latency comparison chart --}}
+        <div class="bg-surface border border-border rounded-xl p-4">
+            <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">
+                Live Latency — All Nodes (ms)
+            </h3>
+            <canvas id="latencyChart" height="120"></canvas>
+        </div>
 
         {{-- Connections bar chart --}}
         <div class="bg-surface border border-border rounded-xl p-4">
@@ -714,6 +725,111 @@ function dispatcherApp() {
             }, 1000);
         },
 
+        // ── Chart initialisation ─────────────────────────────────────────────
+        initCharts() {
+    this.$nextTick(() => {
+        setTimeout(() => {
+            // ── Latency chart ──────────────────────────────────────────
+            const oldCtx = document.getElementById('latencyChart');
+            if (!oldCtx) return;
+
+            // Replace the canvas node entirely — kills any stale Chart.js ref
+            const newCanvas = document.createElement('canvas');
+            newCanvas.id = 'latencyChart';
+            newCanvas.height = 120;
+            oldCtx.replaceWith(newCanvas);
+
+            this.latencyChart = new Chart(newCanvas, {
+                type: 'line',
+                data: {
+                    labels: Array(20).fill(''),
+                    datasets: this.nodes.map((node, i) => ({
+                        label:           node.name,
+                        data:            [...node.latency_history],
+                        borderColor:     ['#3fb950','#58a6ff','#e05c2e','#d29922','#c084fc'][i % 5],
+                        backgroundColor: 'transparent',
+                        borderWidth:     1.5,
+                        pointRadius:     0,
+                        tension:         0.4,
+                    }))
+                },
+                options: {
+                    responsive:  true,
+                    animation:   false,
+                    plugins: { legend: { labels: { color: '#6e7681', font: { size: 10 } } } },
+                    scales: {
+                        x: { display: false },
+                        y: { grid: { color: '#21262d' }, ticks: { color: '#6e7681', font: { size: 10 } }, min: 0 }
+                    }
+                }
+            });
+
+            // ── Sparklines ─────────────────────────────────────────────
+            this.nodes.forEach((node, i) => {
+                const oldSpark = document.getElementById('spark_' + node.id);
+                if (!oldSpark) return;
+
+                const newSpark = document.createElement('canvas');
+                newSpark.id     = 'spark_' + node.id;
+                newSpark.width  = 60;
+                newSpark.height = 20;
+                newSpark.className = 'sparkline-canvas opacity-70';
+                oldSpark.replaceWith(newSpark);
+
+                this.initSparkline(node, i);
+            });
+        }, 50);
+    });
+},
+
+        initSparkline(node, colorIdx) {
+    const canvas = document.getElementById('spark_' + node.id);
+    if (!canvas) return;
+
+    const colors = ['#3fb950', '#58a6ff', '#e05c2e', '#d29922', '#c084fc'];
+    this.chartInstances[node.id] = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: Array(20).fill(''),
+            datasets: [{
+                data:            [...node.latency_history],
+                borderColor:     colors[colorIdx % 5],
+                backgroundColor: 'transparent',
+                borderWidth:     1,
+                pointRadius:     0,
+                tension:         0.3,
+            }]
+        },
+        options: {
+            responsive: false,
+            animation:  false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales:  { x: { display: false }, y: { display: false } }
+        }
+    });
+},
+
+       updateCharts() {
+    if (!this.latencyChart || !this.latencyChart.data) return;
+
+    try {
+        this.nodes.forEach((node, i) => {
+            const ds = this.latencyChart.data.datasets[i];
+            if (ds) ds.data = [...node.latency_history];
+
+            const spark = this.chartInstances[node.id];
+            if (spark && spark.data) {
+                spark.data.datasets[0].data = [...node.latency_history];
+                spark.update('none');
+            }
+        });
+
+        this.latencyChart.update('none');
+    } catch (e) {
+        // Chart was mid-destroy — skip this update cycle
+    }
+},
+
         // ── Polling (live metrics refresh) ─────────────────────────────────
         startPolling() {
             this.pollInterval = setInterval(() => this.pollMetrics(), 2000);
@@ -842,9 +958,23 @@ function dispatcherApp() {
     const res  = await this.post('/dispatcher/reset', {});
     const data = await res.json();
     if (data.ok) {
+        // 1. Destroy ALL chart instances before touching state
+        if (this.latencyChart) {
+            this.latencyChart.destroy();
+            this.latencyChart = null;
+        }
+        Object.values(this.chartInstances).forEach(chart => chart.destroy());
+        this.chartInstances = {};
+
+        // 2. Now update state
         this.updateState(data.nodes, []);
         this.log = [];
         this.alerts = [];
+
+        // 3. Wait for Alpine to re-render DOM, then re-init
+        this.$nextTick(() => {
+            setTimeout(() => this.initCharts(), 50);
+        });
     }
 },
         async clearLog() {
