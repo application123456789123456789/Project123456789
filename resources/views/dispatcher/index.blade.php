@@ -728,73 +728,87 @@ function dispatcherApp() {
 
         // ── Chart initialisation ─────────────────────────────────────────────
         initCharts() {
-            // Main latency trend chart (right panel)
-            this.$nextTick(() => {
-                const ctx = document.getElementById('latencyChart');
-                if (!ctx) return;
+    this.$nextTick(() => {
+        setTimeout(() => {
+            // ── Latency chart ──────────────────────────────────────────
+            const oldCtx = document.getElementById('latencyChart');
+            if (!oldCtx) return;
 
-                this.latencyChart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: Array(20).fill(''),
-                        datasets: this.nodes.map((node, i) => ({
-                            label:       node.name,
-                            data:        [...node.latency_history],
-                            borderColor: ['#3fb950', '#58a6ff', '#e05c2e', '#d29922', '#c084fc'][i % 5],
-                            backgroundColor: 'transparent',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            tension:     0.4,
-                        }))
-                    },
-                    options: {
-                        responsive: true,
-                        animation: false,
-                        plugins: { legend: { labels: { color: '#6e7681', font: { size: 10 } } } },
-                        scales: {
-                            x: { display: false },
-                            y: {
-                                grid:   { color: '#21262d' },
-                                ticks:  { color: '#6e7681', font: { size: 10 } },
-                                min: 0,
-                            }
-                        }
-                    }
-                });
+            // Replace the canvas node entirely — kills any stale Chart.js ref
+            const newCanvas = document.createElement('canvas');
+            newCanvas.id = 'latencyChart';
+            newCanvas.height = 120;
+            oldCtx.replaceWith(newCanvas);
 
-                // Per-node sparkline canvases
-                this.nodes.forEach((node, i) => {
-                    this.initSparkline(node, i);
-                });
-            });
-        },
-
-        initSparkline(node, colorIdx) {
-            const canvas = document.getElementById('spark_' + node.id);
-            if (!canvas) return;
-
-            const colors = ['#3fb950', '#58a6ff', '#e05c2e', '#d29922', '#c084fc'];
-            this.chartInstances[node.id] = new Chart(canvas, {
+            this.latencyChart = new Chart(newCanvas, {
                 type: 'line',
                 data: {
                     labels: Array(20).fill(''),
-                    datasets: [{
+                    datasets: this.nodes.map((node, i) => ({
+                        label:           node.name,
                         data:            [...node.latency_history],
-                        borderColor:     colors[colorIdx % 5],
+                        borderColor:     ['#3fb950','#58a6ff','#e05c2e','#d29922','#c084fc'][i % 5],
                         backgroundColor: 'transparent',
-                        borderWidth:     1,
+                        borderWidth:     1.5,
                         pointRadius:     0,
-                        tension:         0.3,
-                    }]
+                        tension:         0.4,
+                    }))
                 },
                 options: {
-                    responsive: false,
-                    animation:  false,
-                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                    scales: { x: { display: false }, y: { display: false } }
+                    responsive:  true,
+                    animation:   false,
+                    plugins: { legend: { labels: { color: '#6e7681', font: { size: 10 } } } },
+                    scales: {
+                        x: { display: false },
+                        y: { grid: { color: '#21262d' }, ticks: { color: '#6e7681', font: { size: 10 } }, min: 0 }
+                    }
                 }
             });
+
+            // ── Sparklines ─────────────────────────────────────────────
+            this.nodes.forEach((node, i) => {
+                const oldSpark = document.getElementById('spark_' + node.id);
+                if (!oldSpark) return;
+
+                const newSpark = document.createElement('canvas');
+                newSpark.id     = 'spark_' + node.id;
+                newSpark.width  = 60;
+                newSpark.height = 20;
+                newSpark.className = 'sparkline-canvas opacity-70';
+                oldSpark.replaceWith(newSpark);
+
+                this.initSparkline(node, i);
+            });
+        }, 50);
+    });
+},
+
+        initSparkline(node, colorIdx) {
+    const canvas = document.getElementById('spark_' + node.id);
+    if (!canvas) return;
+
+    const colors = ['#3fb950', '#58a6ff', '#e05c2e', '#d29922', '#c084fc'];
+    this.chartInstances[node.id] = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: Array(20).fill(''),
+            datasets: [{
+                data:            [...node.latency_history],
+                borderColor:     colors[colorIdx % 5],
+                backgroundColor: 'transparent',
+                borderWidth:     1,
+                pointRadius:     0,
+                tension:         0.3,
+            }]
         },
+        options: {
+            responsive: false,
+            animation:  false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales:  { x: { display: false }, y: { display: false } }
+        }
+    });
+},
 
         updateCharts() {
             if (!this.latencyChart) return;
